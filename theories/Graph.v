@@ -1,6 +1,8 @@
 Require Import RelationClasses.
 Require Import List.
-
+Require Import MSets.
+Require Import Program.
+Require Import Lia.
 
 Parameter node : Type.
 Record edge :=
@@ -8,6 +10,21 @@ mk_edge {
   from : node;
   to : node;
 }.
+
+Module Node_Ordered <: OrderedType.
+Definition t : Type := node.
+Definition eq : t -> t -> Prop := @eq node.
+Program Instance eq_equiv : Equivalence eq.
+Parameter lt : t -> t -> Prop.
+Parameter lt_strorder : StrictOrder lt.
+Local Obligation Tactic := try unfold eq; simpl_relation.
+Program Instance lt_compat : Proper (eq ==> eq ==> iff) lt.
+Parameter compare : t -> t -> comparison.
+Parameter compare_spec : forall x y : t, CompareSpec (eq x y) (lt x y) (lt y x) (compare x y).
+Parameter eq_dec : forall x y : t, {eq x y} + {~ eq x y}.
+End Node_Ordered.
+
+Module S := Make Node_Ordered.
 
 Lemma unique_edge :
   forall e e' : edge,
@@ -23,12 +40,12 @@ Qed.
 
 Record graph :=
 mk_graph {
-  nodes : list node;
+  nodes : S.t;
   edges : edge -> bool;
   edges_closed :
     forall e : edge,
       edges e = true ->
-      In (from e) nodes /\ In (to e) nodes;
+      S.In (from e) nodes /\ S.In (to e) nodes;
   no_self_edges :
     forall e : edge,
       edges e = true ->
@@ -38,6 +55,111 @@ mk_graph {
       edges e = true ->
       edges ({|from := to e; to := from e|}) = true;
 }.
+
+Definition StrictSubset (a b : S.t) : Prop :=
+  S.Subset a b /\ ~ S.Subset b a.
+
+Lemma InA_In :
+forall a L,
+InA Node_Ordered.eq a L <-> In a L.
+Proof.
+  intros a L.
+  induction L as [| b L IH]; simpl.
+  {
+    apply InA_nil.
+  }
+  {
+    rewrite InA_cons.
+    unfold Node_Ordered.eq.
+    rewrite IH.
+    split; intros [H | H]; auto.
+  }
+Qed.
+
+Lemma NoDupA_NoDup :
+forall l,
+NoDupA Node_Ordered.eq l <-> NoDup l.
+Proof.
+  intros L.
+  induction L as [| b L IH].
+  {
+    split; intros _; auto using NoDupA_nil, NoDup_nil.
+  }
+  {
+    split; intros H; inversion H; subst;
+    try apply NoDup_cons; try apply NoDupA_cons;
+    try apply IH; auto;
+    intro H4; apply H2;
+    apply InA_In; auto.
+  }
+Qed.
+
+Lemma Subset_incl :
+forall a b,
+S.Subset a b <-> incl (S.elements a) (S.elements b).
+Proof.
+  intros a b.
+  unfold S.Subset.
+  unfold incl.
+  split; intros Hab x Ha.
+  {
+    apply InA_In.
+    apply S.elements_spec1.
+    apply Hab.
+    apply S.elements_spec1.
+    apply InA_In.
+    auto.
+  }
+  {
+    apply S.elements_spec1.
+    apply InA_In.
+    apply Hab.
+    apply InA_In.
+    apply S.elements_spec1.
+    auto.
+  }
+Qed.
+
+Lemma StrictSubset_cardinal :
+forall a b, StrictSubset a b -> S.cardinal a < S.cardinal b.
+Proof.
+  intros a b [H1 H2].
+  rewrite Subset_incl in H1.
+  rewrite Subset_incl in H2.
+  rewrite S.cardinal_spec.
+  rewrite S.cardinal_spec.
+  assert (length (S.elements a) <= length (S.elements b)) as H3.
+  {
+    apply NoDup_incl_length; auto.
+    apply NoDupA_NoDup.
+    apply S.elements_spec2w.
+  }
+  assert (length (S.elements a) <> length (S.elements b)); try lia.
+  intro H4.
+  apply H2.
+  apply NoDup_length_incl; auto; try lia.
+  apply NoDupA_NoDup.
+  apply S.elements_spec2w.
+Qed.
+
+Section graph_ind.
+  Variable P : graph -> Prop.
+  Hypothesis IH : forall (g : graph) ,
+    (forall (g' : graph) ,
+      StrictSubset (nodes g') (nodes g) ->
+      P g'
+    ) ->
+    P g.
+
+  Program Fixpoint graph_ind (g : graph) {measure (S.cardinal (nodes g))} : P g := _.
+  Next Obligation.
+  apply IH.
+  intros g' Hsub.
+  apply graph_ind.
+  apply StrictSubset_cardinal.
+  auto.
+  Defined.
+End graph_ind.
 
 Lemma edges_decidable :
 forall G e,
@@ -57,7 +179,7 @@ Proof.
 Qed.
 
 Inductive path (G : graph) : node -> node -> Prop :=
-| path_refl : forall n : node, In n (nodes G) -> path G n n
+| path_refl : forall n : node, S.In n (nodes G) -> path G n n
 | path_edge :
     forall (n : node) (e : edge), edges G e = true ->
       path G n (from e) ->
@@ -67,7 +189,7 @@ Inductive path (G : graph) : node -> node -> Prop :=
 Lemma path_in_graph :
 forall G a b,
 path G a b ->
-In a (nodes G) /\ In b (nodes G).
+S.In a (nodes G) /\ S.In b (nodes G).
 Proof.
   intros G a b p.
   induction p as [n H | n e He p IH].
@@ -176,8 +298,8 @@ Defined.
 
 Lemma path_decidable :
   forall (G : graph) (a b : node),
-  In a (nodes G) ->
-  In b (nodes G) ->
+  S.In a (nodes G) ->
+  S.In b (nodes G) ->
   {path G a b} + {~ path G a b}.
 Proof.
   admit.
