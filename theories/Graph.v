@@ -143,7 +143,7 @@ Proof.
 Qed.
 
 Section graph_ind.
-  Variable P : graph -> Prop.
+  Variable P : graph -> Type.
   Hypothesis IH : forall (g : graph) ,
     (forall (g' : graph) ,
       StrictSubset (nodes g') (nodes g) ->
@@ -296,14 +296,161 @@ Proof.
   apply (path_trans G).
 Defined.
 
+Definition removeNode (n : node) (G : graph) : graph.
+Proof.
+  apply (mk_graph
+  (S.remove n (nodes G))
+  (fun (e : edge) => 
+    if Node_Ordered.eq_dec (from e) n then false else
+    if Node_Ordered.eq_dec (to e) n then false else
+    edges G e
+  )
+  ).
+  {
+    intros e He.
+    rewrite S.remove_spec.
+    rewrite S.remove_spec.
+    destruct (Node_Ordered.eq_dec (from e) n) as [H1 | H1].
+    {
+      discriminate He.
+    }
+    unfold Node_Ordered.eq in H1.
+    destruct (Node_Ordered.eq_dec (to e) n) as [H2 | H2].
+    {
+      discriminate He.
+    }
+    unfold Node_Ordered.eq in H2.
+    apply edges_closed in He.
+    destruct He as [H3 H4].
+    auto.
+  }
+  {
+    intros e He.
+    destruct (Node_Ordered.eq_dec (from e) n) as [H1 | H1].
+    {
+      discriminate He.
+    }
+    unfold Node_Ordered.eq in H1.
+    destruct (Node_Ordered.eq_dec (to e) n) as [H2 | H2].
+    {
+      discriminate He.
+    }
+    unfold Node_Ordered.eq in H2.
+    apply no_self_edges in He.
+    auto.
+  }
+  {
+    simpl.
+    intros e He.
+    destruct (Node_Ordered.eq_dec (from e) n) as [H1 | H1].
+    {
+      discriminate He.
+    }
+    unfold Node_Ordered.eq in H1.
+    destruct (Node_Ordered.eq_dec (to e) n) as [H2 | H2].
+    {
+      discriminate He.
+    }
+    unfold Node_Ordered.eq in H2.
+    apply undirected.
+    auto.
+  }
+Defined.
+
+Lemma Subset_In :
+forall (s1 s2 : S.t),
+S.Subset s1 s2 <-> (forall (x : node) , S.In x s1 -> S.In x s2).
+Proof.
+Admitted.
+
+Lemma StrictSubset_removeNode :
+forall (G : graph) (n : node) ,
+S.In n (nodes G) ->
+StrictSubset (nodes (removeNode n G)) (nodes G).
+Proof.
+intros G n Hinn.
+simpl.
+split.
+{
+  apply Subset_In.
+  intros m Hinm.
+  rewrite S.remove_spec in Hinm.
+  apply Hinm.
+}
+{
+  intros Hsub.
+  rewrite Subset_In in Hsub.
+  apply Hsub in Hinn.
+  rewrite S.remove_spec in Hinn.
+  apply Hinn.
+  reflexivity.
+}
+Qed.
+
+Lemma removeNode_path :
+forall (G : graph) (n : node) (a b : node),
+path (removeNode n G) a b ->
+path G a b.
+Proof.
+  intros G n a b.
+  intros p.
+  induction p as [a H | a e He _ IH].
+  {
+    apply path_refl.
+    simpl in H.
+    rewrite S.remove_spec in H.
+    apply H.
+  }
+  {
+    apply path_edge; auto.
+    simpl in He.
+    destruct (Node_Ordered.eq_dec (from e) n); try discriminate He.
+    destruct (Node_Ordered.eq_dec (to e) n); try discriminate He.
+    exact He.
+  }
+Qed.
+
+Lemma nodes_decidable :
+forall (G : graph) (n : node) ,
+{S.In n (nodes G)} + {~S.In n (nodes G)}.
+Proof.
+Admitted.
+
 Lemma path_decidable :
   forall (G : graph) (a b : node),
-  S.In a (nodes G) ->
-  S.In b (nodes G) ->
   {path G a b} + {~ path G a b}.
 Proof.
+  intros G.
+  induction G as [G IH] using graph_ind.
+  intros a b.
+  destruct (nodes_decidable G a) as [Ha | Ha].
+  2:{
+    right.
+    intro p.
+    induction p; auto.
+  }
+  assert (forall a' b : node, {path (removeNode a G) a' b} + {~ path (removeNode a G) a' b}) as Hrem.
+  {
+    intros a' b'; apply IH; auto.
+    apply StrictSubset_removeNode; auto.
+  }
+  
   admit.
 Admitted.
+
+(*
+Done
+1. Algorithm to remove particular node and edges
+2. Prove algorithm gives us graph
+3. Prove algorithm gives us StrictSubset
+4. If graph after algorithm gives path,
+    then we have path in larger graph
+
+Todo
+5. Prove Subset_In
+6. Prove nodes_decidable
+*)
+
 
 (*
 Parameter a : node.
