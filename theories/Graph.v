@@ -25,6 +25,10 @@ Parameter eq_dec : forall x y : t, {eq x y} + {~ eq x y}.
 End Node_Ordered.
 
 Module S := Make Node_Ordered.
+Module SFacts := MSetFacts.Facts S.
+Module SProps := MSetProperties.Properties S.
+Module SDecide := MSetDecide.Decide S.
+Module SEqProperties := MSetEqProperties.EqProperties S.
 
 Lemma unique_edge :
   forall e e' : edge,
@@ -357,12 +361,6 @@ Proof.
   }
 Defined.
 
-Lemma Subset_In :
-forall (s1 s2 : S.t),
-S.Subset s1 s2 <-> (forall (x : node) , S.In x s1 -> S.In x s2).
-Proof.
-Admitted.
-
 Lemma StrictSubset_removeNode :
 forall (G : graph) (n : node) ,
 S.In n (nodes G) ->
@@ -372,14 +370,12 @@ intros G n Hinn.
 simpl.
 split.
 {
-  apply Subset_In.
   intros m Hinm.
   rewrite S.remove_spec in Hinm.
   apply Hinm.
 }
 {
   intros Hsub.
-  rewrite Subset_In in Hsub.
   apply Hsub in Hinn.
   rewrite S.remove_spec in Hinn.
   apply Hinn.
@@ -410,11 +406,129 @@ Proof.
   }
 Qed.
 
-Lemma nodes_decidable :
-forall (G : graph) (n : node) ,
-{S.In n (nodes G)} + {~S.In n (nodes G)}.
+Inductive pathNot (G : graph) (a : node) : node -> node -> Prop :=
+| pathNot_refl : forall n : node, S.In n (nodes G) -> n <> a -> pathNot G a n n
+| pathNot_edge :
+    forall (n : node) (e : edge), edges G e = true ->
+      (to e) <> a ->
+      pathNot G a n (from e) ->
+      pathNot G a n (to e)
+.
+
+Lemma pathNot_In :
+forall G a n b,
+pathNot G a n b -> S.In n (nodes G) /\ S.In b (nodes G).
 Proof.
+  intros G a n b p.
+  induction p as [n Hnot H | n e Hnot He p IH].
+  {
+    split; auto.
+  }
+  {
+    destruct IH as [Hn _].
+    split; auto.
+    apply edges_closed.
+    auto.
+  }
+Qed.
+
+Lemma pathNot_neq :
+forall G a n b,
+pathNot G a n b -> n <> a /\ b <> a.
+Proof.
+  intros G a n b p.
+  induction p as [n Hnot H | n e Hnot He p IH].
+  {
+    split; auto.
+  }
+  {
+    destruct IH as [Hn _].
+    split; auto.
+  }
+Qed.
+
+Lemma pathNot_removeNode :
+forall G a b n,
+a <> n -> a <> b ->
+pathNot G a n b <-> path (removeNode a G) n b.
+Proof.
+  intros G a b n Han Hab.
+  split.
+  {
+    intros p.
+    induction p as [n Hnot H | n e He Hnot p IH].
+    {
+      apply path_refl.
+      simpl.
+      apply SFacts.remove_2; auto.
+    }
+    {
+      apply path_edge; simpl.
+      {
+        rewrite He.
+        apply pathNot_neq in p.
+        destruct p as [H1 H2].
+        destruct (Node_Ordered.eq_dec (from e) a) as [H3 | H3].
+        {
+          unfold Node_Ordered.eq in H3.
+          subst; contradiction.
+        }
+        destruct (Node_Ordered.eq_dec (to e) a) as [H4 | H4].
+        {
+          unfold Node_Ordered.eq in H4.
+          subst; contradiction.
+        }
+        reflexivity.
+      }
+      {
+        apply IH; auto.
+        apply pathNot_neq in p.
+        destruct p as [H1 H2].
+        auto.
+      }
+    }
+  }
+  {
+    intros p.
+    induction p as [n H | n e He p IH].
+    {
+      simpl in H.
+      apply SFacts.remove_3 in H.
+      apply pathNot_refl; auto.
+    }
+    {
+      simpl in *.
+      destruct (Node_Ordered.eq_dec (from e) a) as [H1 | H1]; try discriminate He.
+      unfold Node_Ordered.eq in H1.
+      destruct (Node_Ordered.eq_dec (to e) a) as [H2 | H2]; try discriminate He.
+      unfold Node_Ordered.eq in H2.
+      apply pathNot_edge; auto.
+    }
+  }
+Qed.
+
+Lemma path_left :
+forall G a b,
+a <> b ->
+(path G a b
+<->
+exists n, edges G {| from := a; to := n |} = true /\ pathNot G a n b)
+.
+Proof.
+  intros G a b Hab.
+  split.
+  2:{
+    intros [n [He p]].
+    destruct (pathNot_neq _ _ _ _ p) as [H1 H2].
+    apply pathNot_removeNode in p; auto.
+    eapply path_edge_left; eauto.
+    eapply removeNode_path; eauto.
+  }
+  intros p.
+  
 Admitted.
+
+
 
 Lemma path_decidable :
   forall (G : graph) (a b : node),
@@ -423,7 +537,7 @@ Proof.
   intros G.
   induction G as [G IH] using graph_ind.
   intros a b.
-  destruct (nodes_decidable G a) as [Ha | Ha].
+  destruct (SProps.In_dec a (nodes G)) as [Ha | Ha].
   2:{
     right.
     intro p.
@@ -434,9 +548,82 @@ Proof.
     intros a' b'; apply IH; auto.
     apply StrictSubset_removeNode; auto.
   }
-  
-  admit.
-Admitted.
+  destruct (Node_Ordered.eq_dec a b) as [Hab | Hab].
+  {
+    unfold Node_Ordered.eq in Hab.
+    subst b.
+    left.
+    apply path_refl.
+    apply Ha.
+  }
+  unfold Node_Ordered.eq in Hab.
+  assert (
+    path G a b <-> S.exists_ (fun n =>
+      if Node_Ordered.eq_dec a n then false else true 
+      && edges G {| from:=a; to:=n |}
+      && if Hrem n b then true else false 
+    ) (nodes G) = true
+  ) as Hneighbor.
+  {
+    rewrite path_left; auto.
+    rewrite SFacts.exists_b.
+    2:{
+      intros x y Hxy.
+      subst; auto.
+    }
+    rewrite existsb_exists.
+    split.
+    {
+      intros [n [Hedge p]].
+      exists n.
+      split.
+      {
+        apply InA_In.
+        apply SFacts.elements_1.
+        apply (pathNot_In _ _ _ _ p).
+      }
+      destruct (Node_Ordered.eq_dec a n) as [Han | Han].
+      {
+        unfold Node_Ordered.eq in Han.
+        destruct (pathNot_neq _ _ _ _ p) as [H' _].
+        subst a.
+        contradiction.
+      }
+      unfold Node_Ordered.eq in Han.
+      simpl.
+      rewrite Hedge.
+      simpl.
+      destruct (Hrem n b) as [p' | Hp']; auto.
+      exfalso.
+      apply Hp'; clear Hp'.
+      apply pathNot_removeNode; auto.
+    }
+    {
+      intros [n [Hn H]].
+      apply InA_In in Hn.
+      apply SFacts.elements_2 in Hn.
+      destruct (Node_Ordered.eq_dec a n) as [Han | Han]; try discriminate H.
+      simpl in H.
+      destruct (edges G {| from := a; to := n |}) eqn:Hedge; try discriminate H.
+      simpl in H.
+      destruct (Hrem n b) as [p | Hp]; try discriminate H.
+      clear H.
+      unfold Node_Ordered.eq in Han.
+      exists n.
+      split; auto.
+      apply pathNot_removeNode; auto.
+    }
+  }
+  {
+    destruct (S.exists_ (fun n =>
+      if Node_Ordered.eq_dec a n then false else true 
+      && edges G {| from:=a; to:=n |}
+      && if Hrem n b then true else false 
+    ) (nodes G)) as [|] eqn:H.
+    left; apply Hneighbor; auto.
+    right; intros H'; apply Hneighbor in H'; discriminate H'.
+  }
+Defined.
 
 (*
 Done
