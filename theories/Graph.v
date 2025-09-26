@@ -3,6 +3,8 @@ Require Import List.
 Require Import MSets.
 Require Import Program.
 Require Import Lia.
+Require Import Recdef.
+Require Import Wellfounded.
 
 Parameter node : Type.
 Record edge :=
@@ -406,129 +408,528 @@ Proof.
   }
 Qed.
 
-Inductive pathNot (G : graph) (a : node) : node -> node -> Prop :=
-| pathNot_refl : forall n : node, S.In n (nodes G) -> n <> a -> pathNot G a n n
-| pathNot_edge :
-    forall (n : node) (e : edge), edges G e = true ->
-      (to e) <> a ->
-      pathNot G a n (from e) ->
-      pathNot G a n (to e)
+
+Function pathList (G : graph) (l : list node) {measure length l} : Prop :=
+match l with
+| nil => False
+| x :: nil => S.In x (nodes G)
+| x :: y :: l => edges G {|from := x; to := y|} = true /\ pathList G (y :: l)
+end.
+simpl; auto.
+Defined.
+
+Inductive StartEnd : node -> node -> list node -> Prop :=
+| StartEnd_singleton : forall a, StartEnd a a (a :: nil)
+| StartEnd_cons : forall a b c L, StartEnd b c L -> StartEnd a c (a :: L)
 .
 
-Lemma pathNot_In :
-forall G a n b,
-pathNot G a n b -> S.In n (nodes G) /\ S.In b (nodes G).
+Inductive Postfix : list node -> list node -> Prop :=
+| Postfix_refl : forall l, Postfix l l
+| Postfix_cons : forall a l l', Postfix l l' -> Postfix l (a :: l')
+.
+
+Lemma StartEnd_start :
+forall a b a' L,
+StartEnd a b (a' :: L) -> a = a'.
 Proof.
-  intros G a n b p.
-  induction p as [n Hnot H | n e Hnot He p IH].
+  intros a b a' L SE.
+  remember (a' :: L) as L'.
+  revert  a' L HeqL'.
+  induction SE; intros; subst; auto.
   {
-    split; auto.
+    injection HeqL'; auto.
   }
   {
-    destruct IH as [Hn _].
+    injection HeqL'; auto.
+  }
+Qed.
+
+Lemma In_split :
+forall (a : node) L,
+In a L ->
+exists L1 L2,
+L = L1 ++ a :: L2 /\ ~ In a L2.
+Proof.
+  intros a L Hin.
+  induction L as [| b L IH].
+  {
+    destruct Hin.
+  }
+  {
+    destruct Hin as [Ha | Hin].
+    {
+      subst.
+      destruct (In_dec Node_Ordered.eq_dec a L) as [Hin | Hin].
+      {
+        apply IH in Hin.
+        destruct Hin as [L1 [L2 [HL Hin]]].
+        subst.
+        exists (a :: L1).
+        exists L2.
+        split; auto.
+      }
+      {
+        exists nil.
+        exists L.
+        split; auto.
+      }
+    }
+    apply IH in Hin.
+    destruct Hin as [L1 [L2 [HL Hin]]].
+    subst.
+    exists (b :: L1).
+    exists L2.
     split; auto.
-    apply edges_closed.
+  }
+Qed.
+
+Lemma Postfix_app :
+forall L1 L2,
+Postfix L2 (L1 ++ L2).
+Proof.
+  intros L1 L2.
+  induction L1; simpl.
+  apply Postfix_refl.
+  apply Postfix_cons; auto.
+Qed.
+
+Lemma StartEnd_app_remove :
+forall a b L1 L2,
+StartEnd a b (L1 ++ L2) ->
+length L2 > 0 ->
+exists c, StartEnd c b L2.
+Proof.
+  intros a b L1.
+  revert a b.
+  induction L1 as [| a L IH]; simpl.
+  {
+    intros a b L2 SE HL2.
+    exists a; auto.
+  }
+  {
+    intros a' b L2 SE HL2.
+    inversion SE; subst.
+    {
+      destruct L2; simpl in HL2; try lia.
+      destruct L; discriminate H3.
+    }
+    apply IH in H2; auto.
+  }
+Qed.
+
+
+Lemma StartEnd_postfix :
+forall a b L,
+StartEnd a b (a :: L) ->
+exists L', ~ In a L' /\ StartEnd a b (a :: L') /\ Postfix (a :: L') (a :: L).
+Proof.
+  intros a b L SE.
+  destruct (In_dec (Node_Ordered.eq_dec) a L) as [Ha | Ha].
+  2:{
+    exists L.
+    split; auto.
+    split; auto.
+    apply Postfix_refl.
+  }
+  apply In_split in Ha.
+  destruct Ha as [L1 [L2 [H Hin]]].
+  subst.
+  exists L2.
+  split; auto.
+  split.
+  2:{
+    assert (a :: L1 ++ a :: L2 = (a :: L1) ++ (a :: L2)) as H by (simpl; auto).
+    rewrite H.
+    apply Postfix_app.
+  }
+  clear Hin.
+  assert (a :: L1 ++ a :: L2 = (a :: L1) ++ (a :: L2)) as H by (simpl; auto).
+  rewrite H in SE.
+  apply StartEnd_app_remove in SE; simpl; try lia.
+  destruct SE as [c' SE].
+  assert (c' = a); subst; auto.
+  eapply StartEnd_start; eauto.
+Qed.
+
+Lemma path_postfix :
+forall G L L',
+Postfix L L' ->
+pathList G L' ->
+length L > 0 ->
+pathList G L.
+Proof.
+  intros G L L' PF.
+  induction PF; auto.
+  intros p Hlength.
+  destruct l as [| b l]; simpl in Hlength; try lia.
+  clear Hlength.
+  apply IHPF; simpl; try lia.
+  rewrite pathList_equation in p.
+  destruct l' as [| b' l'].
+  { inversion PF. }
+  apply p.
+Qed.
+
+
+
+Lemma StartEnd_app :
+forall a b c d L L',
+StartEnd a b L ->
+StartEnd c d L' ->
+StartEnd a d (L ++ L').
+Proof.
+  intros a b c d L L' HL.
+  revert c d L'.
+  induction HL as [a | a b c L HL IH]; simpl.
+  {
+    intros b c L' HL'.
+    eapply StartEnd_cons; eauto.
+  }
+  {
+    intros d e L' HL'.
+    eapply StartEnd_cons; eauto. 
+  }
+Qed.
+
+Lemma pathList_right :
+forall G a e L,
+edges G e = true ->
+StartEnd a (from e) L ->
+pathList G L ->
+pathList G (L ++ to e :: nil).
+Proof.
+  intros G a e L He SE p.
+  remember (from e) as b.
+  revert Heqb.
+  induction SE as [a | a b c L SE IH]; simpl; intros H; subst.
+  {
+    rewrite pathList_equation.
+    split.
+    {
+      destruct e; auto.
+    }
+    rewrite pathList_equation.
+    apply edges_closed; auto.
+  }
+  {
+    rewrite pathList_equation in p.
+    destruct L as [| b' L].
+    {inversion SE. }
+    assert (b' = b).
+    {
+      symmetry; eapply StartEnd_start; eauto.
+    }
+    subst b'.
+    destruct p as [He' p].
+    simpl in *.
+    rewrite pathList_equation.
+    split; auto.
+  }
+Qed.
+
+Lemma path_convert :
+forall G a b,
+path G a b <-> exists L, StartEnd a b L /\ pathList G L.
+Proof.
+intros G a b.
+split.
+{
+  intros p.
+  induction p as [a H | a e He p IH].
+  {
+    exists (a :: nil).
+    rewrite pathList_equation.
+    split; auto.
+    apply StartEnd_singleton.
+  }
+  {
+    destruct IH as [L [SE p']].
+    exists (L ++ to e :: nil).
+    split.
+    {
+      eapply StartEnd_app; eauto.
+      eapply StartEnd_singleton.
+    }
+    eapply pathList_right; eauto.
+  }
+}
+{
+  intros [L [SE p]].
+  induction SE; rewrite pathList_equation in p.
+  {
+    apply path_refl; auto.
+  }
+  {
+    destruct L as [|b' L]; try (inversion SE; fail "").
+    destruct p as [He p].
+    assert (b' = b).
+    {
+      symmetry; eapply StartEnd_start; eauto.
+    }
+    subst b'.
+    eapply path_edge_left; eauto.
+  }
+}
+Qed.
+
+
+
+Lemma Postfix_length :
+forall L L',
+Postfix L L' ->
+length L <= length L'.
+Proof.
+  intros L L' PF.
+  induction PF; simpl; auto.
+Qed.
+
+Lemma Postfix_incl :
+forall L L',
+Postfix L L' ->
+incl L L'.
+Proof.
+  intros L L' PF.
+  induction PF; simpl; auto.
+  apply incl_refl.
+  apply incl_tl; auto.
+Qed.
+
+(* https://stackoverflow.com/questions/45872719/how-to-do-induction-on-the-length-of-a-list-in-coq *)
+
+Lemma path_unloop :
+forall G L a b,
+StartEnd a b L ->
+pathList G L ->
+exists L', StartEnd a b L' /\ pathList G L' /\ NoDup L' /\ incl L' L.
+Proof.
+intros G L.
+induction L as [L IH] using (well_founded_induction
+                     (wf_inverse_image _ nat _ (@length _)
+                        PeanoNat.Nat.lt_wf_0)).
+intros a b SE p.
+destruct L as [| a' L]; try (inversion SE; fail "").
+assert (a' = a).
+{
+  symmetry; eapply StartEnd_start; eauto.
+}
+subst a'.
+apply StartEnd_postfix in SE.
+destruct SE as [L' [HnotIn [SE HPost]]].
+apply (path_postfix _ _ _ HPost) in p.
+2:{simpl; lia. }
+destruct L' as [| c L'].
+{
+  inversion SE; subst b.
+  2:{
+    inversion H2.
+  }
+  subst.
+  clear SE.
+  exists (a :: nil).
+  split.
+  {
+    apply StartEnd_singleton.
+  }
+  split; auto.
+  split.
+  apply NoDup_cons; auto; subst.
+  apply NoDup_nil.
+  intros x [Ha | Ha]; simpl; auto.
+  inversion Ha.
+}
+rewrite pathList_equation in p.
+destruct p as [He p].
+inversion SE; subst.
+clear SE.
+assert (b0 = c).
+{
+  eapply StartEnd_start; eauto.
+}
+subst.
+rename H2 into SE.
+assert (length (c :: L') < length (a :: L)) as Hlength.
+{
+  apply Postfix_length in HPost.
+  simpl in *.
+  lia.
+}
+destruct (IH (c :: L') Hlength _ _ SE p) as [LD [SE' [p' [HND Hincl]]]].
+destruct LD as [| c' LD]; try (inversion SE'; fail "").
+assert (c' = c).
+{
+  symmetry; eapply StartEnd_start; eauto.
+}
+subst c'.
+exists (a :: c :: LD).
+split; auto.
+{
+  eapply StartEnd_cons; eauto.
+}
+split.
+{
+  rewrite pathList_equation.
+  split; auto.
+}
+split.
+{
+  apply NoDup_cons; auto.
+}
+{
+  apply Postfix_incl in HPost.
+  eapply incl_tran; eauto.
+  apply incl_cons; simpl; auto.
+  apply incl_tl; auto.
+}
+Qed.
+
+Lemma pathList_convert :
+forall G a b,
+(exists L : list node, StartEnd a b L /\ pathList G L) <->
+(exists L : list node, StartEnd a b L /\ pathList G L /\ NoDup L)
+.
+Proof.
+  intros G a b.
+  split.
+  {
+    intros [L [SE p]].
+    eapply path_unloop in SE; eauto.
+    destruct SE as [L' [SE' [p' [HND Hincl]]]].
+    exists L'; auto.
+  }
+  {
+    intros [L [SE [p _]]].
+    exists L; auto.
+  }
+Qed.
+
+Lemma pathList_notIn :
+forall G n L,
+pathList (removeNode n G) L ->
+In n L -> False.
+Proof.
+  intros G n L p Hin.
+  induction L as [| a L].
+  {
+    destruct Hin.
+  }
+  destruct Hin as [Hna | Hin].
+  {
+    subst.
+    rewrite pathList_equation in p.
+    destruct L.
+    {
+      simpl in p.
+      apply SFacts.remove_1 in p; auto.
+    }
+    destruct p as [H _].
+    simpl in H.
+    destruct (Node_Ordered.eq_dec n n) as [H' | H']; try discriminate H.
+    unfold Node_Ordered.eq in H'.
+    auto.
+  }
+  destruct L as [| b L]; try (destruct Hin; fail "").
+  rewrite pathList_equation in p.
+  destruct p as [He p].
+  apply IHL; auto.
+Qed.
+
+Lemma pathList_lift :
+forall G n L,
+pathList (removeNode n G) L ->
+pathList G L.
+Proof.
+  intros G n L p.
+  induction L as [| a L]; rewrite pathList_equation in p.
+  contradiction.
+  destruct L as [| b L]; rewrite pathList_equation.
+  {
+    simpl in p.
+    eapply SFacts.remove_3; eauto.
+  }
+  {
+    destruct p as [He p].
+    split; auto.
+    simpl in He.
+    destruct (Node_Ordered.eq_dec a n); try discriminate He.
+    destruct (Node_Ordered.eq_dec b n); try discriminate He.
     auto.
   }
 Qed.
 
-Lemma pathNot_neq :
-forall G a n b,
-pathNot G a n b -> n <> a /\ b <> a.
+Lemma pathList_remove :
+forall G n a b,
+(exists L, pathList G L /\ StartEnd a b L /\ ~ In n L)
+<->
+(path (removeNode n G) a b).
 Proof.
-  intros G a n b p.
-  induction p as [n Hnot H | n e Hnot He p IH].
-  {
-    split; auto.
-  }
-  {
-    destruct IH as [Hn _].
-    split; auto.
-  }
-Qed.
-
-Lemma pathNot_removeNode :
-forall G a b n,
-a <> n -> a <> b ->
-pathNot G a n b <-> path (removeNode a G) n b.
-Proof.
-  intros G a b n Han Hab.
+  intros G n a b.
   split.
   {
-    intros p.
-    induction p as [n Hnot H | n e He Hnot p IH].
+    intros [L [p [SE Hin]]].
+    induction SE.
     {
+      rewrite pathList_equation in p.
       apply path_refl.
       simpl.
       apply SFacts.remove_2; auto.
+      intro H.
+      apply Hin; simpl; auto.
     }
     {
-      apply path_edge; simpl.
+      destruct L as [| b' L].
+      {inversion SE. }
+      assert (b' = b).
       {
-        rewrite He.
-        apply pathNot_neq in p.
-        destruct p as [H1 H2].
-        destruct (Node_Ordered.eq_dec (from e) a) as [H3 | H3].
+        symmetry; eapply StartEnd_start; eauto.
+      }
+      subst b'.
+      rewrite pathList_equation in p.
+      destruct p as [He p].
+      eapply path_edge_left.
+      2:{
+        apply IHSE.
         {
-          unfold Node_Ordered.eq in H3.
-          subst; contradiction.
+          eapply path_postfix; eauto; simpl; try lia.
+          apply Postfix_refl.
         }
-        destruct (Node_Ordered.eq_dec (to e) a) as [H4 | H4].
         {
-          unfold Node_Ordered.eq in H4.
-          subst; contradiction.
+          intros Hin'.
+          apply Hin.
+          simpl; auto.
         }
-        reflexivity.
       }
       {
-        apply IH; auto.
-        apply pathNot_neq in p.
-        destruct p as [H1 H2].
+        simpl.
+        rewrite He.
+        destruct (Node_Ordered.eq_dec a n) as [Han | Han]; unfold Node_Ordered.eq in Han.
+        {
+          exfalso.
+          apply Hin; simpl; auto.
+        }
+        destruct (Node_Ordered.eq_dec b n) as [Hbn | Hbn]; unfold Node_Ordered.eq in Hbn.
+        {
+          exfalso.
+          apply Hin; simpl; auto.
+        }
         auto.
       }
     }
   }
   {
     intros p.
-    induction p as [n H | n e He p IH].
+    apply path_convert in p.
+    destruct p as [L [SE p]].
+    exists L.
+    split.
     {
-      simpl in H.
-      apply SFacts.remove_3 in H.
-      apply pathNot_refl; auto.
+      eapply pathList_lift; eauto.
     }
+    split; auto.
     {
-      simpl in *.
-      destruct (Node_Ordered.eq_dec (from e) a) as [H1 | H1]; try discriminate He.
-      unfold Node_Ordered.eq in H1.
-      destruct (Node_Ordered.eq_dec (to e) a) as [H2 | H2]; try discriminate He.
-      unfold Node_Ordered.eq in H2.
-      apply pathNot_edge; auto.
+      intro H; eapply pathList_notIn; eauto.
     }
   }
 Qed.
-
-Lemma path_left :
-forall G a b,
-a <> b ->
-(path G a b
-<->
-exists n, edges G {| from := a; to := n |} = true /\ pathNot G a n b)
-.
-Proof.
-  intros G a b Hab.
-  split.
-  2:{
-    intros [n [He p]].
-    destruct (pathNot_neq _ _ _ _ p) as [H1 H2].
-    apply pathNot_removeNode in p; auto.
-    eapply path_edge_left; eauto.
-    eapply removeNode_path; eauto.
-  }
-  intros p.
-  
-Admitted.
-
-
 
 Lemma path_decidable :
   forall (G : graph) (a b : node),
@@ -565,38 +966,71 @@ Proof.
     ) (nodes G) = true
   ) as Hneighbor.
   {
-    rewrite path_left; auto.
     rewrite SFacts.exists_b.
     2:{
       intros x y Hxy.
       subst; auto.
     }
     rewrite existsb_exists.
+    simpl.
+    rewrite path_convert; auto.
+    rewrite pathList_convert.
     split.
     {
-      intros [n [Hedge p]].
-      exists n.
+      intros [L [SE [p ND]]].
+      induction L as [L IH'] using (well_founded_induction
+                     (wf_inverse_image _ nat _ (@length _)
+                        PeanoNat.Nat.lt_wf_0)).
+      destruct L as [|a' L].
+      {inversion SE. }
+      assert (a' = a).
+      {
+        symmetry; eapply StartEnd_start; eauto.
+      }
+      subst a'.
+      destruct L as [| c L].
+      {
+        inversion SE; subst.
+        contradiction.
+        inversion H2.
+      }
+      rewrite pathList_equation in p.
+      destruct p as [He p].
+      exists c.
       split.
       {
         apply InA_In.
         apply SFacts.elements_1.
-        apply (pathNot_In _ _ _ _ p).
+        apply edges_closed in He.
+        apply He.
       }
-      destruct (Node_Ordered.eq_dec a n) as [Han | Han].
+      rewrite He.
+      simpl.
+      destruct (Node_Ordered.eq_dec a c) as [Hac | Hac]; unfold Node_Ordered.eq in Hac.
       {
-        unfold Node_Ordered.eq in Han.
-        destruct (pathNot_neq _ _ _ _ p) as [H' _].
-        subst a.
-        contradiction.
+        subst.
+        apply NoDup_cons_iff in ND.
+        destruct ND as [H _].
+        simpl in H.
+        exfalso.
+        apply H.
+        auto.
       }
-      unfold Node_Ordered.eq in Han.
-      simpl.
-      rewrite Hedge.
-      simpl.
-      destruct (Hrem n b) as [p' | Hp']; auto.
+      apply NoDup_cons_iff in ND.
+      destruct ND as [HnotIn ND].
+      inversion SE; subst; clear SE.
+      assert (b0 = c).
+      {
+        eapply StartEnd_start; eauto.
+      }
+      subst b0.
+      rename H2 into SE.
+      destruct (Hrem c b) as [Hp | Hp]; auto.
       exfalso.
-      apply Hp'; clear Hp'.
-      apply pathNot_removeNode; auto.
+      apply Hp.
+      clear Hp.
+      apply pathList_remove.
+      exists (c :: L); auto.
     }
     {
       intros [n [Hn H]].
@@ -609,9 +1043,20 @@ Proof.
       destruct (Hrem n b) as [p | Hp]; try discriminate H.
       clear H.
       unfold Node_Ordered.eq in Han.
-      exists n.
+      apply pathList_remove in p.
+      destruct p as [L [Hl [SE HnotIn]]].
+      apply pathList_convert.
+      exists (a :: L).
+      destruct L as [| n' L].
+      {inversion SE. }
+      assert (n' = n).
+      {
+        symmetry; eapply StartEnd_start; eauto.
+      }
+      subst n'.
+      rewrite pathList_equation.
       split; auto.
-      apply pathNot_removeNode; auto.
+      eapply StartEnd_cons; eauto.
     }
   }
   {
