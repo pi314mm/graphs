@@ -525,9 +525,30 @@ Proof.
     eapply removeNode_path; eauto.
   }
   intros p.
-  
-Admitted.
-
+  induction p.
+  {
+    contradiction.
+  }
+  {
+    destruct (Node_Ordered.eq_dec n (from e)) as [Hnf | Hnf]; unfold Node_Ordered.eq in Hnf.
+    {
+      subst.
+      exists (to e); split; auto.
+      {
+        destruct e; auto.
+      }
+      {
+        apply pathNot_refl; auto.
+        apply edges_closed; auto.
+      }
+    }
+    {
+      destruct (IHp Hnf) as [a [He p']].
+      exists a; split; auto.
+      apply pathNot_edge; auto.
+    }
+  }
+Qed.
 
 
 Lemma path_decidable :
@@ -625,60 +646,8 @@ Proof.
   }
 Defined.
 
-(*
-Done
-1. Algorithm to remove particular node and edges
-2. Prove algorithm gives us graph
-3. Prove algorithm gives us StrictSubset
-4. If graph after algorithm gives path,
-    then we have path in larger graph
 
-Todo
-5. Prove Subset_In
-6. Prove nodes_decidable
-*)
-
-
-(*
-Parameter a : node.
-Parameter b : node.
-Axiom diff_ab : a <> b.
-Definition atob : edge := mk_edge a b.
-Definition btoa : edge := mk_edge b a.
-
-Definition G : graph.
-Proof.
-  refine (mk_graph (fun (n : node) => n = a \/ n = b) (fun (e : edge) => e = atob \/ e = btoa) _ _ _).
-  {
-    intros e [He | He]; subst; auto.
-  }
-  {
-    intros e [He | He]; subst; simpl; auto using diff_ab.
-  }
-  {
-    intros e [He | He]; subst; simpl; auto.
-  }
-Defined.
-
-Definition path_aa : (path G a a).
-Proof.
-  refine (path_refl G a _).
-  left.
-  reflexivity.
-Defined.
-
-Definition path_ab_1 : (path G a b).
-Proof.
-  refine (path_edge G a atob _ (path_aa)).
-  simpl.
-  auto.
-Defined.
-
-Definition path_ab_3 : path G a b.
-Proof.
-  apply (path_edge' a); simpl; auto.
-  apply (path_edge' b); simpl; auto.
-  apply (path_edge' a); simpl; auto.
-  exact path_aa.
-Defined.
-*)
+Require Extraction.
+Extract Inductive sumbool => "bool" [ "true" "false" ].
+Extract Inductive bool => "bool" [ "true" "false" ].
+Extraction path_decidable.
